@@ -303,7 +303,7 @@ export default function CameraApp() {
       try {
         await video.play();
         console.log('🎬 SUCESSO: Vídeo reproduzindo!');
-      } catch (e) {
+      } catch {
         console.warn('⚠️ Play automático falhou, tentando manual...');
         
         const playBtn = document.createElement('button');
