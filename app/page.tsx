@@ -1,0 +1,479 @@
+'use client';
+
+import { useState, useRef, useEffect } from 'react';
+
+export default function CameraApp() {
+  const [isStreamActive, setIsStreamActive] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('user');
+  const [isMobile, setIsMobile] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+    
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    setIsMobile(isMobileDevice);
+    
+    if (!isMobileDevice) {
+      setFacingMode('user');
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setError('Seu navegador não suporta acesso à câmera.');
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setIsStreamActive(false);
+  };
+
+  const takePhoto = () => {
+    if (!videoRef.current || !canvasRef.current || !streamRef.current) {
+      setError('Câmera não está disponível');
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      setError('Erro ao processar imagem');
+      return;
+    }
+
+    // Forçar reconexão se necessário
+    if (video.videoWidth === 0) {
+      video.srcObject = null;
+      setTimeout(() => {
+        video.srcObject = streamRef.current;
+        video.play();
+      }, 100);
+      
+      setTimeout(() => {
+        performCapture(video, canvas, context);
+      }, 1000);
+    } else {
+      performCapture(video, canvas, context);
+    }
+  };
+
+  const performCapture = async (video: HTMLVideoElement, canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) => {
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
+    
+    canvas.width = width;
+    canvas.height = height;
+    context.drawImage(video, 0, 0, width, height);
+    
+    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    
+    if (imageDataUrl && imageDataUrl !== 'data:,') {
+      setCapturedImage(imageDataUrl);
+      console.log('📸 Foto capturada:', imageDataUrl.substring(0, 100) + '...');
+      
+      // Enviar para webhook do n8n
+      await sendToWebhook(imageDataUrl);
+    } else {
+      setError('Erro ao capturar imagem');
+    }
+  };
+
+  const sendToWebhook = async (base64Image: string) => {
+    try {
+      setIsSending(true);
+      console.log('🔗 Enviando imagem para webhook do n8n...');
+      
+      const response = await fetch('https://webhooks.moveefit.com.br/webhook/imagem', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          image: base64Image,
+          timestamp: new Date().toISOString(),
+          device: isMobile ? 'mobile' : 'desktop',
+          dimensions: {
+            width: videoRef.current?.videoWidth || 0,
+            height: videoRef.current?.videoHeight || 0
+          }
+        })
+      });
+
+      if (response.ok) {
+        console.log('✅ Imagem enviada com sucesso para o webhook!');
+        const responseData = await response.json().catch(() => ({}));
+        console.log('📄 Resposta do webhook:', responseData);
+      } else {
+        console.error('❌ Erro ao enviar para webhook:', response.status, response.statusText);
+        setError(`Erro ao enviar imagem: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('❌ Erro na requisição para webhook:', error);
+      setError('Erro de conexão com o servidor');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const switchCamera = () => {
+    if (!isMobile) return;
+    
+    const newFacingMode = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(newFacingMode);
+    
+    if (isStreamActive) {
+      stopCamera();
+      setTimeout(() => startCamera(), 100);
+    }
+  };
+
+  const downloadImage = () => {
+    if (!capturedImage) return;
+    
+    const link = document.createElement('a');
+    link.download = `moveefit-photo-${new Date().getTime()}.jpg`;
+    link.href = capturedImage;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const retakePhoto = () => {
+    setCapturedImage(null);
+    setError('');
+  };
+
+  const refreshCamera = () => {
+    forceReleaseCamera();
+  };
+
+  if (!mounted) {
+    return null;
+  }
+
+  return (
+    <div className="app-container">
+      <header className="app-header">
+        <div className="header-content">
+          <div className="logo-section">
+            <div className="logo-icon">📱</div>
+            <h1>MoveeFit Camera</h1>
+          </div>
+          <p className="subtitle">Capture suas fotos com qualidade profissional</p>
+        </div>
+      </header>
+
+      <main className="main-content">
+        {isSending && (
+          <div className="sending-message">
+            <span className="loading-spinner"></span>
+            <span>Enviando imagem para o servidor...</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="error-message">
+            <span className="error-icon">⚠️</span>
+            <div className="error-content">
+              <span>{error}</span>
+              {error.includes('sendo usada') || error.includes('Device in use') ? (
+                <div className="error-actions">
+                  <button onClick={refreshCamera} className="retry-btn">
+                    🔄 Tentar Novamente
+                  </button>
+                  <button onClick={forceReleaseCamera} className="force-btn">
+                    🔧 Forçar Liberação
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setError('')} className="retry-btn">
+                  🔄 Tentar Novamente
+                </button>
+              )}
+            </div>
+            <button onClick={() => setError('')} className="error-close">×</button>
+          </div>
+        )}
+
+        <div className="camera-container">
+          {!isStreamActive && !capturedImage ? (
+            // Tela inicial
+            <div className="welcome-section">
+              <div className="welcome-icon">📷</div>
+              <h2>Bem-vindo ao MoveeFit Camera</h2>
+              <p>Clique no botão abaixo para ativar a câmera e capturar fotos incríveis</p>
+              <button 
+                onClick={async () => {
+                  setError('');
+                  setIsLoading(true);
+                  
+                  // Parar streams anteriores
+                  if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(track => track.stop());
+                    streamRef.current = null;
+                  }
+
+                  try {
+                    console.log('🎥 Obtendo acesso à câmera...');
+                    
+                    const constraints = {
+                      video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: isMobile ? facingMode : undefined
+                      }
+                    };
+
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    console.log('✅ Stream obtido:', stream);
+                    
+                    streamRef.current = stream;
+                    
+                    // Aguardar um pouco para o stream se estabilizar
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    
+                    // Configurar vídeo se existir
+                    if (videoRef.current) {
+                      const video = videoRef.current;
+                      
+                      console.log('📺 Configurando vídeo para exibição...');
+                      
+                      // Configurar propriedades básicas
+                      video.srcObject = stream;
+                      video.autoplay = true;
+                      video.playsInline = true;
+                      video.muted = true;
+                      video.controls = false;
+                      
+                      // Configurar eventos
+                      video.onloadedmetadata = () => {
+                        console.log('📐 Metadata carregada:', {
+                          width: video.videoWidth,
+                          height: video.videoHeight,
+                          readyState: video.readyState
+                        });
+                      };
+                      
+                      video.oncanplay = () => {
+                        console.log('▶️ Vídeo pode reproduzir');
+                      };
+                      
+                      video.onplaying = () => {
+                        console.log('🎬 Vídeo está reproduzindo!');
+                      };
+                      
+                      video.onerror = (e) => {
+                        console.error('❌ Erro no vídeo:', e);
+                      };
+                      
+                      // Tentar reproduzir
+                      console.log('🎬 Tentando reproduzir...');
+                      video.play().catch(playError => {
+                        console.warn('⚠️ Play automático falhou:', playError);
+                        console.log('💡 Clique no botão 🔧 para forçar a visualização');
+                      });
+                    }
+                    
+                    // Ativar interface imediatamente
+                    console.log('🚀 Ativando câmera...');
+                    setIsStreamActive(true);
+                    setIsLoading(false);
+                    
+                  } catch (err: any) {
+                    console.error('❌ Erro:', err);
+                    let errorMessage = 'Erro ao acessar câmera';
+                    
+                    if (err.message.includes('Device in use') || err.message.includes('in use')) {
+                      errorMessage = 'Câmera está sendo usada por outro aplicativo. Feche outras abas/apps e tente novamente.';
+                    } else if (err.message.includes('Permission denied') || err.message.includes('NotAllowedError')) {
+                      errorMessage = 'Permissão negada. Clique no ícone da câmera na barra do navegador e permita o acesso.';
+                    } else if (err.message.includes('NotFoundError')) {
+                      errorMessage = 'Nenhuma câmera encontrada. Verifique se há uma câmera conectada.';
+                    }
+                    
+                    setError(errorMessage);
+                    setIsLoading(false);
+                  }
+                }}
+                disabled={isLoading}
+                className="start-camera-btn"
+              >
+                {isLoading ? (
+                  <>
+                    <span className="loading-spinner"></span>
+                    Ativando câmera...
+                  </>
+                ) : (
+                  <>
+                    <span>📸</span>
+                    Ativar Câmera
+                  </>
+                )}
+              </button>
+            </div>
+          ) : capturedImage ? (
+            // Tela de foto capturada
+            <div className="photo-preview">
+              <h2>Foto Capturada</h2>
+              <div className="photo-container">
+                <img src={capturedImage} alt="Foto capturada" className="captured-photo" />
+              </div>
+              <div className="photo-actions">
+                <button onClick={retakePhoto} className="retake-btn">
+                  <span>🔄</span>
+                  Tirar Nova Foto
+                </button>
+                <button onClick={downloadImage} className="download-btn">
+                  <span>💾</span>
+                  Baixar Foto
+                </button>
+              </div>
+            </div>
+          ) : (
+            // Tela da câmera ativa
+            <div className="camera-view">
+              <div className="video-container">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="camera-video"
+                />
+                
+                <div className="camera-overlay">
+                  <div className="camera-frame"></div>
+                </div>
+
+                <div className="camera-controls">
+                  {isMobile && (
+                    <button onClick={switchCamera} className="control-btn secondary">
+                      <span>🔄</span>
+                    </button>
+                  )}
+                  
+                  <button 
+                    onClick={async () => {
+                      console.log('🔧 FORÇANDO RECONEXÃO COMPLETA...');
+                      
+                      if (videoRef.current && streamRef.current) {
+                        const video = videoRef.current;
+                        const stream = streamRef.current;
+                        
+                        // Parar e limpar tudo
+                        video.pause();
+                        video.srcObject = null;
+                        
+                        console.log('🔄 Aguardando limpeza...');
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        // Reconectar
+                        console.log('🔗 Reconectando stream...');
+                        video.srcObject = stream;
+                        video.load(); // Forçar reload
+                        
+                        // Configurar eventos antes do play
+                        video.onloadeddata = () => {
+                          console.log('📊 Dados carregados');
+                        };
+                        
+                        video.oncanplaythrough = () => {
+                          console.log('✅ Pode reproduzir completamente');
+                        };
+                        
+                        // Tentar play com múltiplas abordagens
+                        try {
+                          await video.play();
+                          console.log('🎬 SUCESSO: Vídeo reproduzindo!');
+                        } catch (e) {
+                          console.warn('⚠️ Play automático falhou, tentando manual...');
+                          
+                          // Criar botão temporário para interação do usuário
+                          const playBtn = document.createElement('button');
+                          playBtn.innerText = '▶️ Clique para Ver Câmera';
+                          playBtn.style.cssText = `
+                            position: absolute; 
+                            top: 50%; 
+                            left: 50%; 
+                            transform: translate(-50%, -50%);
+                            z-index: 1000;
+                            padding: 1rem 2rem;
+                            background: #e53e3e;
+                            color: white;
+                            border: none;
+                            border-radius: 8px;
+                            font-size: 1.2rem;
+                            cursor: pointer;
+                          `;
+                          
+                          video.parentElement?.appendChild(playBtn);
+                          
+                          playBtn.onclick = async () => {
+                            try {
+                              await video.play();
+                              console.log('🎉 SUCESSO COM INTERAÇÃO: Vídeo reproduzindo!');
+                              playBtn.remove();
+                            } catch (playErr) {
+                              console.error('❌ Falha mesmo com interação:', playErr);
+                            }
+                          };
+                        }
+                      }
+                    }}
+                    className="control-btn secondary"
+                    title="Forçar visualização"
+                  >
+                    <span>🔧</span>
+                  </button>
+                  
+                  <button onClick={takePhoto} className="capture-btn" disabled={isSending}>
+                    {isSending ? (
+                      <>
+                        <span className="loading-spinner"></span>
+                      </>
+                    ) : (
+                      <span className="capture-icon">📸</span>
+                    )}
+                  </button>
+                  
+                  <button onClick={stopCamera} className="control-btn secondary">
+                    <span>❌</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <canvas ref={canvasRef} className="hidden-canvas" />
+      </main>
+
+      <footer className="app-footer">
+        <p>MoveeFit Camera - Tecnologia para o seu movimento</p>
+        <p className="device-info">
+          {isMobile ? '📱 Dispositivo móvel' : '💻 Desktop'}
+        </p>
+      </footer>
+    </div>
+  );
+}
