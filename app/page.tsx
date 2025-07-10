@@ -38,13 +38,11 @@ export default function CameraApp() {
     };
   }, []);
 
-  // Função startCamera corrigida
   const startCamera = async () => {
     try {
       setError('');
       setIsLoading(true);
       
-      // Parar streams anteriores
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
@@ -65,23 +63,19 @@ export default function CameraApp() {
       
       streamRef.current = stream;
       
-      // Aguardar um pouco para o stream se estabilizar
       await new Promise(resolve => setTimeout(resolve, 300));
       
-      // Configurar vídeo se existir
       if (videoRef.current) {
         const video = videoRef.current;
         
         console.log('📺 Configurando vídeo para exibição...');
         
-        // Configurar propriedades básicas
         video.srcObject = stream;
         video.autoplay = true;
         video.playsInline = true;
         video.muted = true;
         video.controls = false;
         
-        // Configurar eventos
         video.onloadedmetadata = () => {
           console.log('📐 Metadata carregada:', {
             width: video.videoWidth,
@@ -98,11 +92,10 @@ export default function CameraApp() {
           console.log('🎬 Vídeo está reproduzindo!');
         };
         
-        video.onerror = (e) => {
-          console.error('❌ Erro no vídeo:', e);
+        video.onerror = () => {
+          console.error('❌ Erro no vídeo');
         };
         
-        // Tentar reproduzir
         console.log('🎬 Tentando reproduzir...');
         video.play().catch(playError => {
           console.warn('⚠️ Play automático falhou:', playError);
@@ -110,20 +103,20 @@ export default function CameraApp() {
         });
       }
       
-      // Ativar interface imediatamente
       console.log('🚀 Ativando câmera...');
       setIsStreamActive(true);
       setIsLoading(false);
       
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('❌ Erro:', err);
       let errorMessage = 'Erro ao acessar câmera';
+      const error = err as Error;
       
-      if (err.message.includes('Device in use') || err.message.includes('in use')) {
+      if (error.message?.includes('Device in use') || error.message?.includes('in use')) {
         errorMessage = 'Câmera está sendo usada por outro aplicativo. Feche outras abas/apps e tente novamente.';
-      } else if (err.message.includes('Permission denied') || err.message.includes('NotAllowedError')) {
+      } else if (error.message?.includes('Permission denied') || error.message?.includes('NotAllowedError')) {
         errorMessage = 'Permissão negada. Clique no ícone da câmera na barra do navegador e permita o acesso.';
-      } else if (err.message.includes('NotFoundError')) {
+      } else if (error.message?.includes('NotFoundError')) {
         errorMessage = 'Nenhuma câmera encontrada. Verifique se há uma câmera conectada.';
       }
       
@@ -140,11 +133,9 @@ export default function CameraApp() {
     setIsStreamActive(false);
   };
 
-  // Função forceReleaseCamera corrigida
   const forceReleaseCamera = async () => {
     console.log('🔧 FORÇANDO LIBERAÇÃO COMPLETA DA CÂMERA...');
     
-    // Parar todas as tracks
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
         track.stop();
@@ -153,7 +144,6 @@ export default function CameraApp() {
       streamRef.current = null;
     }
     
-    // Limpar vídeo
     if (videoRef.current) {
       videoRef.current.srcObject = null;
       videoRef.current.pause();
@@ -162,7 +152,6 @@ export default function CameraApp() {
     setIsStreamActive(false);
     setError('');
     
-    // Aguardar liberação completa
     await new Promise(resolve => setTimeout(resolve, 1000));
     console.log('✅ Câmera liberada, pronto para nova conexão');
   };
@@ -182,7 +171,6 @@ export default function CameraApp() {
       return;
     }
 
-    // Forçar reconexão se necessário
     if (video.videoWidth === 0) {
       video.srcObject = null;
       setTimeout(() => {
@@ -212,7 +200,6 @@ export default function CameraApp() {
       setCapturedImage(imageDataUrl);
       console.log('📸 Foto capturada:', imageDataUrl.substring(0, 100) + '...');
       
-      // Enviar para webhook do n8n
       await sendToWebhook(imageDataUrl);
     } else {
       setError('Erro ao capturar imagem');
@@ -288,6 +275,69 @@ export default function CameraApp() {
     forceReleaseCamera();
   };
 
+  const forceVideoReconnect = async () => {
+    console.log('🔧 FORÇANDO RECONEXÃO COMPLETA...');
+    
+    if (videoRef.current && streamRef.current) {
+      const video = videoRef.current;
+      const stream = streamRef.current;
+      
+      video.pause();
+      video.srcObject = null;
+      
+      console.log('🔄 Aguardando limpeza...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      console.log('🔗 Reconectando stream...');
+      video.srcObject = stream;
+      video.load();
+      
+      video.onloadeddata = () => {
+        console.log('📊 Dados carregados');
+      };
+      
+      video.oncanplaythrough = () => {
+        console.log('✅ Pode reproduzir completamente');
+      };
+      
+      try {
+        await video.play();
+        console.log('🎬 SUCESSO: Vídeo reproduzindo!');
+      } catch (e) {
+        console.warn('⚠️ Play automático falhou, tentando manual...');
+        
+        const playBtn = document.createElement('button');
+        playBtn.innerText = '▶️ Clique para Ver Câmera';
+        playBtn.style.cssText = `
+          position: absolute; 
+          top: 50%; 
+          left: 50%; 
+          transform: translate(-50%, -50%);
+          z-index: 1000;
+          padding: 1rem 2rem;
+          background: #e53e3e;
+          color: white;
+          border: none;
+          border-radius: 8px;
+          font-size: 1.2rem;
+          cursor: pointer;
+        `;
+        
+        video.parentElement?.appendChild(playBtn);
+        
+        playBtn.onclick = async () => {
+          try {
+            await video.play();
+            console.log('🎉 SUCESSO COM INTERAÇÃO: Vídeo reproduzindo!');
+            playBtn.remove();
+          } catch (playErr) {
+            console.error('❌ Falha mesmo com interação:', playErr);
+          }
+        };
+      }
+    }
+  };
+
   if (!mounted) {
     return null;
   }
@@ -338,7 +388,6 @@ export default function CameraApp() {
 
         <div className="camera-container">
           {!isStreamActive && !capturedImage ? (
-            // Tela inicial
             <div className="welcome-section">
               <div className="welcome-icon">📷</div>
               <h2>Bem-vindo ao MoveeFit Camera</h2>
@@ -362,10 +411,10 @@ export default function CameraApp() {
               </button>
             </div>
           ) : capturedImage ? (
-            // Tela de foto capturada
             <div className="photo-preview">
               <h2>Foto Capturada</h2>
               <div className="photo-container">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={capturedImage} alt="Foto capturada" className="captured-photo" />
               </div>
               <div className="photo-actions">
@@ -380,7 +429,6 @@ export default function CameraApp() {
               </div>
             </div>
           ) : (
-            // Tela da câmera ativa
             <div className="camera-view">
               <div className="video-container">
                 <video
@@ -403,73 +451,7 @@ export default function CameraApp() {
                   )}
                   
                   <button 
-                    onClick={async () => {
-                      console.log('🔧 FORÇANDO RECONEXÃO COMPLETA...');
-                      
-                      if (videoRef.current && streamRef.current) {
-                        const video = videoRef.current;
-                        const stream = streamRef.current;
-                        
-                        // Parar e limpar tudo
-                        video.pause();
-                        video.srcObject = null;
-                        
-                        console.log('🔄 Aguardando limpeza...');
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        
-                        // Reconectar
-                        console.log('🔗 Reconectando stream...');
-                        video.srcObject = stream;
-                        video.load(); // Forçar reload
-                        
-                        // Configurar eventos antes do play
-                        video.onloadeddata = () => {
-                          console.log('📊 Dados carregados');
-                        };
-                        
-                        video.oncanplaythrough = () => {
-                          console.log('✅ Pode reproduzir completamente');
-                        };
-                        
-                        // Tentar play com múltiplas abordagens
-                        try {
-                          await video.play();
-                          console.log('🎬 SUCESSO: Vídeo reproduzindo!');
-                        } catch (e) {
-                          console.warn('⚠️ Play automático falhou, tentando manual...');
-                          
-                          // Criar botão temporário para interação do usuário
-                          const playBtn = document.createElement('button');
-                          playBtn.innerText = '▶️ Clique para Ver Câmera';
-                          playBtn.style.cssText = `
-                            position: absolute; 
-                            top: 50%; 
-                            left: 50%; 
-                            transform: translate(-50%, -50%);
-                            z-index: 1000;
-                            padding: 1rem 2rem;
-                            background: #e53e3e;
-                            color: white;
-                            border: none;
-                            border-radius: 8px;
-                            font-size: 1.2rem;
-                            cursor: pointer;
-                          `;
-                          
-                          video.parentElement?.appendChild(playBtn);
-                          
-                          playBtn.onclick = async () => {
-                            try {
-                              await video.play();
-                              console.log('🎉 SUCESSO COM INTERAÇÃO: Vídeo reproduzindo!');
-                              playBtn.remove();
-                            } catch (playErr) {
-                              console.error('❌ Falha mesmo com interação:', playErr);
-                            }
-                          };
-                        }
-                      }
-                    }}
+                    onClick={forceVideoReconnect}
                     className="control-btn secondary"
                     title="Forçar visualização"
                   >
