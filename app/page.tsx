@@ -38,12 +38,133 @@ export default function CameraApp() {
     };
   }, []);
 
+  // Função startCamera corrigida
+  const startCamera = async () => {
+    try {
+      setError('');
+      setIsLoading(true);
+      
+      // Parar streams anteriores
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+
+      console.log('🎥 Obtendo acesso à câmera...');
+      
+      const constraints = {
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: isMobile ? facingMode : undefined
+        }
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log('✅ Stream obtido:', stream);
+      
+      streamRef.current = stream;
+      
+      // Aguardar um pouco para o stream se estabilizar
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Configurar vídeo se existir
+      if (videoRef.current) {
+        const video = videoRef.current;
+        
+        console.log('📺 Configurando vídeo para exibição...');
+        
+        // Configurar propriedades básicas
+        video.srcObject = stream;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.muted = true;
+        video.controls = false;
+        
+        // Configurar eventos
+        video.onloadedmetadata = () => {
+          console.log('📐 Metadata carregada:', {
+            width: video.videoWidth,
+            height: video.videoHeight,
+            readyState: video.readyState
+          });
+        };
+        
+        video.oncanplay = () => {
+          console.log('▶️ Vídeo pode reproduzir');
+        };
+        
+        video.onplaying = () => {
+          console.log('🎬 Vídeo está reproduzindo!');
+        };
+        
+        video.onerror = (e) => {
+          console.error('❌ Erro no vídeo:', e);
+        };
+        
+        // Tentar reproduzir
+        console.log('🎬 Tentando reproduzir...');
+        video.play().catch(playError => {
+          console.warn('⚠️ Play automático falhou:', playError);
+          console.log('💡 Clique no botão 🔧 para forçar a visualização');
+        });
+      }
+      
+      // Ativar interface imediatamente
+      console.log('🚀 Ativando câmera...');
+      setIsStreamActive(true);
+      setIsLoading(false);
+      
+    } catch (err: any) {
+      console.error('❌ Erro:', err);
+      let errorMessage = 'Erro ao acessar câmera';
+      
+      if (err.message.includes('Device in use') || err.message.includes('in use')) {
+        errorMessage = 'Câmera está sendo usada por outro aplicativo. Feche outras abas/apps e tente novamente.';
+      } else if (err.message.includes('Permission denied') || err.message.includes('NotAllowedError')) {
+        errorMessage = 'Permissão negada. Clique no ícone da câmera na barra do navegador e permita o acesso.';
+      } else if (err.message.includes('NotFoundError')) {
+        errorMessage = 'Nenhuma câmera encontrada. Verifique se há uma câmera conectada.';
+      }
+      
+      setError(errorMessage);
+      setIsLoading(false);
+    }
+  };
+
   const stopCamera = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
     setIsStreamActive(false);
+  };
+
+  // Função forceReleaseCamera corrigida
+  const forceReleaseCamera = async () => {
+    console.log('🔧 FORÇANDO LIBERAÇÃO COMPLETA DA CÂMERA...');
+    
+    // Parar todas as tracks
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log('🛑 Track parada:', track.kind);
+      });
+      streamRef.current = null;
+    }
+    
+    // Limpar vídeo
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+      videoRef.current.pause();
+    }
+    
+    setIsStreamActive(false);
+    setError('');
+    
+    // Aguardar liberação completa
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    console.log('✅ Câmera liberada, pronto para nova conexão');
   };
 
   const takePhoto = () => {
@@ -223,98 +344,7 @@ export default function CameraApp() {
               <h2>Bem-vindo ao MoveeFit Camera</h2>
               <p>Clique no botão abaixo para ativar a câmera e capturar fotos incríveis</p>
               <button 
-                onClick={async () => {
-                  setError('');
-                  setIsLoading(true);
-                  
-                  // Parar streams anteriores
-                  if (streamRef.current) {
-                    streamRef.current.getTracks().forEach(track => track.stop());
-                    streamRef.current = null;
-                  }
-
-                  try {
-                    console.log('🎥 Obtendo acesso à câmera...');
-                    
-                    const constraints = {
-                      video: {
-                        width: { ideal: 640 },
-                        height: { ideal: 480 },
-                        facingMode: isMobile ? facingMode : undefined
-                      }
-                    };
-
-                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    console.log('✅ Stream obtido:', stream);
-                    
-                    streamRef.current = stream;
-                    
-                    // Aguardar um pouco para o stream se estabilizar
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                    
-                    // Configurar vídeo se existir
-                    if (videoRef.current) {
-                      const video = videoRef.current;
-                      
-                      console.log('📺 Configurando vídeo para exibição...');
-                      
-                      // Configurar propriedades básicas
-                      video.srcObject = stream;
-                      video.autoplay = true;
-                      video.playsInline = true;
-                      video.muted = true;
-                      video.controls = false;
-                      
-                      // Configurar eventos
-                      video.onloadedmetadata = () => {
-                        console.log('📐 Metadata carregada:', {
-                          width: video.videoWidth,
-                          height: video.videoHeight,
-                          readyState: video.readyState
-                        });
-                      };
-                      
-                      video.oncanplay = () => {
-                        console.log('▶️ Vídeo pode reproduzir');
-                      };
-                      
-                      video.onplaying = () => {
-                        console.log('🎬 Vídeo está reproduzindo!');
-                      };
-                      
-                      video.onerror = (e) => {
-                        console.error('❌ Erro no vídeo:', e);
-                      };
-                      
-                      // Tentar reproduzir
-                      console.log('🎬 Tentando reproduzir...');
-                      video.play().catch(playError => {
-                        console.warn('⚠️ Play automático falhou:', playError);
-                        console.log('💡 Clique no botão 🔧 para forçar a visualização');
-                      });
-                    }
-                    
-                    // Ativar interface imediatamente
-                    console.log('🚀 Ativando câmera...');
-                    setIsStreamActive(true);
-                    setIsLoading(false);
-                    
-                  } catch (err: any) {
-                    console.error('❌ Erro:', err);
-                    let errorMessage = 'Erro ao acessar câmera';
-                    
-                    if (err.message.includes('Device in use') || err.message.includes('in use')) {
-                      errorMessage = 'Câmera está sendo usada por outro aplicativo. Feche outras abas/apps e tente novamente.';
-                    } else if (err.message.includes('Permission denied') || err.message.includes('NotAllowedError')) {
-                      errorMessage = 'Permissão negada. Clique no ícone da câmera na barra do navegador e permita o acesso.';
-                    } else if (err.message.includes('NotFoundError')) {
-                      errorMessage = 'Nenhuma câmera encontrada. Verifique se há uma câmera conectada.';
-                    }
-                    
-                    setError(errorMessage);
-                    setIsLoading(false);
-                  }
-                }}
+                onClick={startCamera}
                 disabled={isLoading}
                 className="start-camera-btn"
               >
