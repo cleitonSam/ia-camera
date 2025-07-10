@@ -13,6 +13,7 @@ export default function CameraApp() {
   const [isIOS, setIsIOS] = useState(false);
   const [mounted, setMounted] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null); // This was missing!
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
