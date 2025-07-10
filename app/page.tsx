@@ -10,8 +10,8 @@ export default function CameraApp() {
   const [isSending, setIsSending] = useState(false);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('user');
   const [isMobile, setIsMobile] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -19,7 +19,10 @@ export default function CameraApp() {
     setMounted(true);
     
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    
     setIsMobile(isMobileDevice);
+    setIsIOS(isIOSDevice);
     
     if (!isMobileDevice) {
       setFacingMode('user');
@@ -52,9 +55,13 @@ export default function CameraApp() {
       
       const constraints = {
         video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: isMobile ? facingMode : undefined
+          width: { ideal: isMobile ? 1280 : 640 },
+          height: { ideal: isMobile ? 720 : 480 },
+          facingMode: isMobile ? facingMode : undefined,
+          ...(isIOS && {
+            aspectRatio: 16/9,
+            frameRate: { ideal: 30 }
+          })
         }
       };
 
@@ -70,19 +77,29 @@ export default function CameraApp() {
         
         console.log('📺 Configurando vídeo para exibição...');
         
+        // Configurações específicas para iOS
+        if (isIOS) {
+          video.setAttribute('webkit-playsinline', 'true');
+          video.setAttribute('playsinline', 'true');
+        }
+        
         video.srcObject = stream;
         video.autoplay = true;
         video.playsInline = true;
         video.muted = true;
         video.controls = false;
         
-        video.onloadedmetadata = () => {
-          console.log('📐 Metadata carregada:', {
-            width: video.videoWidth,
-            height: video.videoHeight,
-            readyState: video.readyState
-          });
-        };
+        // Promise para aguardar carregamento completo
+        const waitForVideo = new Promise<void>((resolve) => {
+          video.onloadedmetadata = () => {
+            console.log('📐 Metadata carregada:', {
+              width: video.videoWidth,
+              height: video.videoHeight,
+              readyState: video.readyState
+            });
+            resolve();
+          };
+        });
         
         video.oncanplay = () => {
           console.log('▶️ Vídeo pode reproduzir');
@@ -96,11 +113,28 @@ export default function CameraApp() {
           console.error('❌ Erro no vídeo');
         };
         
+        // Aguardar metadata e tentar reproduzir
+        await waitForVideo;
+        
         console.log('🎬 Tentando reproduzir...');
-        video.play().catch(playError => {
+        try {
+          await video.play();
+          console.log('✅ Reprodução iniciada com sucesso!');
+        } catch (playError) {
           console.warn('⚠️ Play automático falhou:', playError);
-          console.log('💡 Clique no botão 🔧 para forçar a visualização');
-        });
+          
+          // Para iOS, força um play adicional após um delay
+          if (isIOS) {
+            setTimeout(async () => {
+              try {
+                await video.play();
+                console.log('🍎 Play iOS com delay funcionou!');
+              } catch (retryError) {
+                console.warn('⚠️ Retry iOS falhou:', retryError);
+              }
+            }, 500);
+          }
+        }
       }
       
       console.log('🚀 Ativando câmera...');
@@ -243,15 +277,35 @@ export default function CameraApp() {
     }
   };
 
-  const switchCamera = () => {
+  const switchCamera = async () => {
     if (!isMobile) return;
     
+    console.log('🔄 Trocando câmera...');
     const newFacingMode = facingMode === 'environment' ? 'user' : 'environment';
     setFacingMode(newFacingMode);
     
     if (isStreamActive) {
+      // Para iOS, precisamos de um delay maior
+      const delay = isIOS ? 800 : 100;
+      
       stopCamera();
-      setTimeout(() => startCamera(), 100);
+      
+      // Limpar completamente o vídeo no iOS
+      if (isIOS && videoRef.current) {
+        videoRef.current.srcObject = null;
+        videoRef.current.load();
+      }
+      
+      setTimeout(async () => {
+        await startCamera();
+        
+        // Para iOS, força um refresh adicional após trocar
+        if (isIOS) {
+          setTimeout(() => {
+            forceVideoReconnect();
+          }, 1000);
+        }
+      }, delay);
     }
   };
 
@@ -282,15 +336,42 @@ export default function CameraApp() {
       const video = videoRef.current;
       const stream = streamRef.current;
       
+      // Parar completamente
       video.pause();
       video.srcObject = null;
       
+      // Para iOS, usar load() para limpar estado
+      if (isIOS) {
+        video.load();
+      }
+      
       console.log('🔄 Aguardando limpeza...');
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, isIOS ? 1000 : 500));
       
       console.log('🔗 Reconectando stream...');
+      
+      // Configurar novamente para iOS
+      if (isIOS) {
+        video.setAttribute('webkit-playsinline', 'true');
+        video.setAttribute('playsinline', 'true');
+      }
+      
       video.srcObject = stream;
-      video.load();
+      video.muted = true;
+      video.playsInline = true;
+      
+      // Para iOS, aguardar metadata antes de tentar play
+      if (isIOS) {
+        await new Promise<void>((resolve) => {
+          video.onloadedmetadata = () => {
+            console.log('📱 iOS metadata recarregada');
+            resolve();
+          };
+          video.load();
+        });
+      } else {
+        video.load();
+      }
       
       video.onloadeddata = () => {
         console.log('📊 Dados carregados');
@@ -304,10 +385,10 @@ export default function CameraApp() {
         await video.play();
         console.log('🎬 SUCESSO: Vídeo reproduzindo!');
       } catch {
-        console.warn('⚠️ Play automático falhou, tentando manual...');
+        console.warn('⚠️ Play automático falhou, criando botão manual...');
         
         const playBtn = document.createElement('button');
-        playBtn.innerText = '▶️ Clique para Ver Câmera';
+        playBtn.innerText = isIOS ? '🍎 Toque para Ver Câmera' : '▶️ Clique para Ver Câmera';
         playBtn.style.cssText = `
           position: absolute; 
           top: 50%; 
@@ -321,6 +402,7 @@ export default function CameraApp() {
           border-radius: 8px;
           font-size: 1.2rem;
           cursor: pointer;
+          touch-action: manipulation;
         `;
         
         video.parentElement?.appendChild(playBtn);
